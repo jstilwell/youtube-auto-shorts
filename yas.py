@@ -197,6 +197,14 @@ class YouTubeUploader:
                     privacy_status = row.get('privacy', 'private').lower()
                     publish_at_raw = row.get('publishAt', '').strip()
                     
+                    # Check upload status - only include videos that haven't been uploaded (status = 0 or missing)
+                    status = row.get('status', '0').strip()
+                    # Convert to integer, default to 0 if not a valid number
+                    try:
+                        status_int = int(status)
+                    except (ValueError, TypeError):
+                        status_int = 0
+                    
                     # Convert human-readable publishAt to ISO 8601
                     publish_at = None
                     if publish_at_raw:
@@ -217,12 +225,14 @@ class YouTubeUploader:
                         'privacy_status': privacy_status,
                         'publish_at': publish_at,
                         'playlist': row.get('playlist', '').strip(),
+                        'status': status_int,
                         # Keep legacy fields for backwards compatibility
                         'release_date': row.get('release_date', '').strip(),
                         'release_time': row.get('release_time', '').strip()
                     }
                     
-                    if video_data['video_filename']:
+                    # Only include videos that haven't been uploaded yet
+                    if video_data['video_filename'] and status_int == 0:
                         videos.append(video_data)
         
         else:
@@ -303,7 +313,10 @@ class YouTubeUploader:
         tags = tags or []
         
         # Build status object
-        status = {'privacyStatus': privacy_status.lower()}
+        status = {
+            'privacyStatus': privacy_status.lower(),
+            'madeForKids': False  # Always set to False - videos are not intended for children
+        }
         
         # Add scheduled publish time if provided
         if publish_at:
@@ -359,6 +372,40 @@ class YouTubeUploader:
             print(f"An error occurred: {e}")
             return None
     
+    def update_manifest_status(self, manifest_path, video_filename, status=1):
+        """Update the status of a specific video in the manifest file"""
+        if not os.path.exists(manifest_path):
+            return False
+        
+        # Read all rows
+        rows = []
+        header = []
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            header = reader.fieldnames
+            for row in reader:
+                rows.append(row)
+        
+        # Find and update the specific video
+        updated = False
+        for row in rows:
+            filename = row.get('fileName', '') or row.get('video_filename', '')
+            if filename.strip() == video_filename.strip():
+                row['status'] = str(status)
+                updated = True
+                break
+        
+        if not updated:
+            return False
+        
+        # Write back to file
+        with open(manifest_path, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=header)
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        return True
+
     def upload_from_manifest(self, manifest_path, video_directory=None):
         videos_metadata = self.parse_manifest(manifest_path)
         
@@ -369,7 +416,20 @@ class YouTubeUploader:
         video_dir = Path(video_directory)
         
         results = []
+        upload_count = 0
+        
         for metadata in videos_metadata:
+            # Check if we need to reconnect after 14 uploads
+            if upload_count >= 14:
+                print(f"\nReached upload limit of 14. Reconnecting to YouTube API...")
+                try:
+                    self.youtube = self._authenticate()
+                    upload_count = 0
+                    print("Successfully reconnected to YouTube API.")
+                except Exception as e:
+                    print(f"Failed to reconnect: {e}")
+                    break
+            
             # Look for the exact video filename specified in the manifest
             video_path = video_dir / metadata['video_filename']
             
@@ -388,6 +448,7 @@ class YouTubeUploader:
             print(f"\nUploading: {metadata['title']}")
             print(f"Video file: {video_path}")
             print(f"Privacy: {privacy_status}")
+            print(f"Status: Not uploaded (0) - proceeding with upload")
             if publish_at:
                 print(f"Scheduled for: {publish_at}")
             if playlist:
@@ -405,11 +466,18 @@ class YouTubeUploader:
             )
             
             if result:
+                # Update status to 1 (uploaded) in the manifest file
+                if self.update_manifest_status(manifest_path, metadata['video_filename'], 1):
+                    print(f"Status updated to uploaded (1) in manifest file")
+                else:
+                    print(f"Warning: Could not update status in manifest file")
+                
                 result.update({
                     'release_date': metadata.get('release_date'),
                     'release_time': metadata.get('release_time')
                 })
                 results.append(result)
+                upload_count += 1
             else:
                 print(f"Failed to upload: {metadata['title']}")
         
@@ -453,10 +521,10 @@ class YouTubeUploader:
         
         # Generate CSV content using new format
         with open(output_path, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f)
+            writer = csv.writer(f, quoting=csv.QUOTE_NONNUMERIC)
             
             # Write header with new column names (tags column removed since hashtags are parsed from description)
-            writer.writerow(['fileName', 'title', 'description', 'privacy', 'publishAt', 'playlist'])
+            writer.writerow(['fileName', 'title', 'description', 'privacy', 'publishAt', 'playlist', 'status'])
             
             # Write video rows
             for video_file in video_files:
@@ -476,7 +544,8 @@ class YouTubeUploader:
                     'Add your video description here with #hashtags for auto-tagging.',
                     'private',
                     default_publish_at,
-                    'My Shorts Playlist'  # Example playlist name
+                    'My Shorts Playlist',  # Example playlist name
+                    0  # Default status - not uploaded
                 ])
         
         print(f"Generated CSV manifest: {output_path}")
@@ -516,7 +585,14 @@ class YouTubeUploader:
             # Count videos in manifest
             try:
                 videos = self.parse_manifest(str(manifest_file))
-                video_count = len(videos)
+                pending_count = len(videos)  # parse_manifest already filters for status=0
+                
+                # Also get total count for display
+                with open(manifest_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    total_count = sum(1 for row in reader if row.get('fileName', '').strip())
+                
+                video_count = f"{pending_count} pending (of {total_count} total)"
             except:
                 video_count = "?"
             
