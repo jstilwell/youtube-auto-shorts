@@ -373,70 +373,7 @@ class YouTubeUploader:
             return None
     
     def update_manifest_status(self, manifest_path, video_filename, status=1):
-        """Update the status of a specific video in the manifest file using PowerShell to preserve formatting"""
-        if not os.path.exists(manifest_path):
-            return False
-        
-        import subprocess
-        import platform
-        
-        # Escape the filename for use in regex (escape special regex characters)
-        import re
-        escaped_filename = re.escape(video_filename.strip())
-        
-        try:
-            if platform.system() == "Windows":
-                # Use PowerShell on Windows
-                powershell_command = f'''
-                $content = Get-Content "{manifest_path}" -Encoding UTF8
-                $updated = $false
-                for ($i = 0; $i -lt $content.Length; $i++) {{
-                    if ($content[$i] -match '^"?{escaped_filename}"?,.*,0$') {{
-                        $content[$i] = $content[$i] -replace ',0$', ',{status}'
-                        $updated = $true
-                        break
-                    }}
-                }}
-                if ($updated) {{
-                    $content | Set-Content "{manifest_path}" -Encoding UTF8
-                    Write-Host "Updated"
-                }} else {{
-                    Write-Host "NotFound"
-                }}
-                '''
-                
-                result = subprocess.run(
-                    ["powershell", "-Command", powershell_command],
-                    capture_output=True,
-                    text=True,
-                    shell=True
-                )
-                
-                return "Updated" in result.stdout
-                
-            else:
-                # Use sed on Unix-like systems (macOS, Linux)
-                # Create a sed command that finds the line with the filename and changes status from 0 to 1
-                sed_command = f"sed -i.bak 's/^\\(\"\\?{escaped_filename}\"\\?,.*,\\)0$/\\1{status}/' \"{manifest_path}\""
-                
-                result = subprocess.run(sed_command, shell=True, capture_output=True, text=True)
-                
-                # Check if the backup file was created (indicates a change was made)
-                backup_file = f"{manifest_path}.bak"
-                if os.path.exists(backup_file):
-                    # Remove the backup file
-                    os.remove(backup_file)
-                    return True
-                
-                return False
-                
-        except Exception as e:
-            print(f"Warning: Could not update status using system command: {e}")
-            # Fallback to the original CSV method if system command fails
-            return self._update_manifest_status_fallback(manifest_path, video_filename, status)
-
-    def _update_manifest_status_fallback(self, manifest_path, video_filename, status=1):
-        """Fallback method that preserves quotes when updating CSV"""
+        """Update the status of a specific video in the manifest file preserving formatting"""
         if not os.path.exists(manifest_path):
             return False
         
@@ -460,7 +397,7 @@ class YouTubeUploader:
         # Write back the modified lines
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
-    
+
         return True
 
     def upload_from_manifest(self, manifest_path, video_directory=None):
