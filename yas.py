@@ -315,7 +315,7 @@ class YouTubeUploader:
         # Build status object
         status = {
             'privacyStatus': privacy_status.lower(),
-            'madeForKids': False  # Always set to False - videos are not intended for children
+            'selfDeclaredMadeForKids': False  # Correct property name for COPPA compliance
         }
         
         # Add scheduled publish time if provided
