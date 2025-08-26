@@ -18,7 +18,7 @@ class YouTubeUploader:
     def __init__(self):
         load_dotenv()
         self.scopes = ['https://www.googleapis.com/auth/youtube.upload']
-        self.credentials_file = './credentials/client_secret_1013418193976-ljeiugr28a0umkd6tju9pkmimkgcrdpa.apps.googleusercontent.com.json'
+        self.credentials_file = os.getenv('GOOGLE_CREDENTIALS_FILE', './credentials/client_secret.json')
         self.token_file = './credentials/token.pickle'
         
         # Create credentials directory if it doesn't exist
